@@ -141,14 +141,15 @@ public:
         void parse(Cntx& cntx);
     };
 
-    template<class T, char CHAREND, Error::Type ERREND>
+    template<class T>
     struct Container : std::vector<T> {
         bool unique() const;
-        void parse(Cntx& cntx);
+        void parse(Cntx& cntx, char charEnd, Error::Type errorEnd);
     };
 
     struct Array {
-        Container<Value,']',Error::ArrayEnd> elements;
+        Container<Value> elements;
+        void parse(Cntx& cntx) {elements.parse(cntx, ']',Error::ArrayEnd);}
         void append(Value& v) {elements.emplace_back(v);}
         bool operator==(const Array& a) const {return elements == a.elements;}
     };
@@ -162,7 +163,8 @@ public:
             bool operator==(const Pair& p) const {return name == p.name && value == p.value;}
             void parse(Cntx& cntx);
         };
-        Container<Pair,'}',Error::ObjectEnd> members;
+        Container<Pair> members;
+        void parse(Cntx& cntx) {members.parse(cntx, '}',Error::ObjectEnd);}
         void append(const char* name, Value& v) {members.emplace_back(name, v);}
         bool operator==(const Object& o) const {return members == o.members;}
     };
@@ -171,7 +173,7 @@ public:
         Cntx cntx{str, err};
         if (cntx.check(Error::ObjectBegin)) {
             object = new Object;
-            object->members.parse(cntx);
+            object->parse(cntx);
         }
     }
     ~JSON() {delete object;}
@@ -190,11 +192,11 @@ private:
     Object* object{};
 };
 
-bool JSON::Container<JSON::Value, ']', JSON::Error::ArrayEnd>::unique() const {
+bool JSON::Container<JSON::Value>::unique() const {
     return true;
 }
 
-bool JSON::Container<JSON::Object::Pair, '}', JSON::Error::ObjectEnd>::unique() const {
+bool JSON::Container<JSON::Object::Pair>::unique() const {
     size_t n = size();
     if (n > 1) {
         for (size_t i=0; i<n-1; i++) {
@@ -205,12 +207,12 @@ bool JSON::Container<JSON::Object::Pair, '}', JSON::Error::ObjectEnd>::unique() 
     return true;
 }
 
-template<class T, char CHAREND, JSON::Error::Type ERREND>
-void JSON::Container<T, CHAREND, ERREND>::parse(Cntx& cntx) {
+template<class T>
+void JSON::Container<T>::parse(Cntx& cntx, char charEnd, Error::Type errorEnd) {
     bool separator = true;
     cntx.skipSpaces();
     while (*cntx.ptr) {
-        if (*cntx.ptr == CHAREND) {
+        if (*cntx.ptr == charEnd) {
             cntx.ptr++;
             return;
         }
@@ -233,7 +235,7 @@ void JSON::Container<T, CHAREND, ERREND>::parse(Cntx& cntx) {
         } else
             separator = false;
     }
-    cntx.check(ERREND);
+    cntx.check(errorEnd);
 }
 
 void JSON::Value::parse(Cntx& cntx) {
@@ -242,12 +244,12 @@ void JSON::Value::parse(Cntx& cntx) {
         cntx.ptr++;
         type = Type::Array;
         data.a = new Array;
-        data.a->elements.parse(cntx);
+        data.a->parse(cntx);
     } else if ('{' == *cntx.ptr) {
         cntx.ptr++;
         type = Type::Object;
         data.o = new Object;
-        data.o->members.parse(cntx);
+        data.o->parse(cntx);
     } else if ('"' == *cntx.ptr) {
         type = Type::String;
         auto b = cntx.parseString();
