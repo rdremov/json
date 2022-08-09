@@ -1,34 +1,12 @@
 ﻿#pragma once
 
+#include <cstdlib>
 #include <cstring>
 
 #include <vector>
-#include <functional>
+#include <string>
 
 namespace rvd {
-
-const char* skip_spaces(const char* str) {
-    while (*str == ' ' || *str == '\t' || *str == '\n' || *str == '\r')
-        str++;
-    return str;
-}
-
-const char* string_end(const char* str) {
-    bool protect = false;
-    for (;;) {
-        if (!*str)
-            break;
-        if (!protect) {
-            if (*str == '"')
-                break;
-            if (*str == '\\')
-                protect = true;
-        } else
-            protect = false;
-        str++;
-    }
-    return str;
-}
 
 class JSON {
 public:
@@ -43,6 +21,7 @@ public:
     };
 
     struct Error {
+        const char* start;
         enum Type {
             Success,
             ObjectBegin,
@@ -53,30 +32,24 @@ public:
             StringEnd,
             Colon,
             Comma,
-            NumberSignificand,
-            NumberExp,
-            NumberSign,
-            NumberDecimal,
-            NameNotUnique,
+            NumberInvalid,
+            NotUnique,
         } type{Success};
-        size_t offset{};
+        const char* location{};
+        size_t offset() const {return location - start;}
     };
 
 protected:
-    struct Pool;
-    using Index = size_t;
-
     struct Cntx {
         const char* ptr;
-        const char* ptr0;
         Error& err;
-        Pool& pool;
 
         void skipSpaces() {
-            ptr = skip_spaces(ptr);
+            while (*ptr == ' ' || *ptr == '\t' || *ptr == '\n' || *ptr == '\r')
+                ptr++;
         }
 
-        bool test(const char* str) {
+        bool keyword(const char* str) {
             auto n = strlen(str);
             if (strncmp(str, ptr, n))
                 return false;
@@ -84,7 +57,7 @@ protected:
             return true;
         }
 
-        bool flag(Error::Type errType) {
+        bool check(Error::Type errType) {
             if (err.type != Error::Success)
                 return false;
             skipSpaces();
@@ -98,292 +71,217 @@ protected:
             case Error::Colon: if (*ptr == ':') {ptr++; return true;} break;
             }
             err.type = errType;
-            err.offset = ptr - ptr0;
+            err.location = ptr;
             return false;
         }
 
-        Index parseString() {
+        const char* parseString() {
             skipSpaces();
-            if (!flag(Error::StringBegin))
-                return 0;
+            if (!check(Error::StringBegin))
+                return nullptr;
             auto p0 = ptr;
-            ptr = string_end(p0);
+            bool protect = false;
+            for (;;) {
+                if (!*ptr)
+                    break;
+                if (!protect) {
+                    if (*ptr == '"')
+                        break;
+                    if (*ptr == '\\')
+                        protect = true;
+                } else
+                    protect = false;
+                ptr++;
+            }
             if (!*ptr) {
-                flag(Error::StringEnd);
-                return 0;
+                check(Error::StringEnd);
+                return nullptr;
             }
-            auto len = ptr - p0;
-            auto index = pool.newStr(len);
-            auto p = &pool.strs[index];
-            strncpy(p, p0, len);
-            p[len] = 0;
-            ptr++;
-            return index;
-        }
-
-        const char* parseDigits(char first) {
-            const char* b = nullptr;
-            if ( *ptr >= first && *ptr <= '9') {
-                b = ptr++;
-                while (*ptr >= '0' && *ptr <= '9')
-                    ptr++;
-            }
-            return b;
-        }
-
-        double parseInt(const char* begin, const char* end) {
-            double d = 0;
-            while (begin != end) {
-                d *= 10;
-                d += *begin - '0';
-                begin++;
-            }
-            return d;
-        }
-
-        double parseNumber() {
-            skipSpaces();
-            bool neg = false;
-            if ('-' == *ptr ) {
-                neg = true;
-                ptr++;
-            }
-            bool leadingZero = false;
-            const char* bInt = nullptr;
-            const char* eInt = nullptr;
-            if ('0' == *ptr) {
-                leadingZero = true;
-                ptr++;
-            } else {
-                bInt = parseDigits('1');
-                eInt = ptr;
-            }
-            bool decimal = false;
-            if ('.' == *ptr) {
-                decimal = true;
-                ptr++;
-            }
-            const char* bFrac = nullptr;
-            const char* eFrac = nullptr;
-            if (decimal) {
-                bFrac = parseDigits('0');
-                eFrac = ptr;
-                if (!(leadingZero || bInt) || !bFrac) {
-                    flag(Error::NumberDecimal);
-                    return 0;
-                }
-            }
-            if (!(leadingZero || bInt || bFrac)) {
-                flag(Error::NumberSignificand);
-                return 0;
-            }
-            bool exp = false;
-            if ('e' == *ptr || 'E' == *ptr) {
-                exp = true;
-                ptr++;
-            }
-            bool negExp = false;
-            const char* bExp = nullptr;
-            const char* eExp = nullptr;
-            if (exp) {
-                if ('-' == *ptr || '+' == *ptr) {
-                    negExp = ('-' == *ptr);
-                    ptr++;
-                }
-                bExp = parseDigits('1');
-                eExp = ptr;
-                if (!bExp) {
-                    flag(Error::NumberExp);
-                    return 0;
-                }
-            }
-            if (!bFrac) {
-                if (leadingZero && neg) {
-                    flag(Error::NumberSign);
-                    return 0;
-                }
-                if (decimal) {
-                    flag(Error::NumberDecimal);
-                    return 0;
-                }
-            }
-            double dInt = 0;
-            if (bInt)
-                dInt = parseInt(bInt, eInt);
-            double dFrac = 0;
-            if (bFrac)
-                dFrac = parseInt(bFrac, eFrac);
-            double dExp = 0;
-            if (bExp) {
-                dExp = parseInt(bExp, eExp);
-                if (negExp)
-                    dExp = -dExp;
-            }
-            if (bFrac) {
-                auto power = eFrac - bFrac;
-                while (power--)
-                    dFrac /= 10;
-            }
-            double d = dInt + dFrac;
-            auto power = (int)dExp;
-            if (power > 0) {
-                while (power--)
-                    d *= 10;
-            } else {
-                while (power++)
-                    d /= 10;
-            }
-            if (neg)
-                d = -d;
-            return d;
+            return p0;
         }
     };
 
-    union Data{
-        double d{};
-        Index s;
-        Index a;
-        Index o;
-    };
+public:
+    struct Array;
+    struct Object;
 
-    struct Value {
-        Type type{Type::Null};
-        Data data;
-        void parse(Cntx& cntx) {
-            cntx.skipSpaces();
-            if ('[' == *cntx.ptr) {
-                type = Type::Array;
-                data.a = cntx.pool.newArray();
-                cntx.pool.arrs[data.a].parse(cntx);
-
-            } else if ('{' == *cntx.ptr) {
-                type = Type::Object;
-                data.o = cntx.pool.newObject();
-                cntx.pool.objs[data.o].parse(cntx);
-            } else if ('"' == *cntx.ptr) {
-                type = Type::String;
-                data.s = cntx.parseString();
-            } else if (cntx.test("true")) {
-                type = Type::True;
-            } else if (cntx.test("false")) {
-                type = Type::False;
-            } else if (cntx.test("null")) {
-                type = Type::Null;
-            } else {
-                type = Type::Number;
-                data.d = cntx.parseNumber();
+    class Value {
+        Type type;
+        union Data {
+            double d{};
+            char* s;
+            Array* a;
+            Object* o;
+        } data;
+    public:
+        Value() : type(Type::Null) {}
+        Value(Value& v) : type(v.type) {v.type = Type::Null; memcpy(&data, &v.data, sizeof(data));}
+        Value(double d) : type(Type::Number) {data.d = d;}
+        Value(const char* s) : type(Type::String) {data.s = strdup(s);}
+        Value(Array* a) : type(Type::Array) {data.a = a;}
+        Value(Object* o) : type(Type::Object) {data.o = o;}
+        ~Value() {
+            switch (type) {
+            case Type::String: free(data.s); break;
+            case Type::Array: delete data.a; break;
+            case Type::Object: delete data.o; break;
             }
         }
+        bool operator==(const Value& v) const {
+            if (type != v.type)
+                return false;
+            switch (type) {
+            case Type::Number: return data.d == v.data.d;
+            case Type::String: return !strcmp(data.s, v.data.s);
+            case Type::Array: return *data.a == *v.data.a;
+            case Type::Object: return *data.o == *v.data.o;
+            }
+            return true;
+        }
+        void parse(Cntx& cntx);
     };
 
     template<class T, char CHAREND, Error::Type ERREND>
     struct Container : std::vector<T> {
-        void parse(Cntx& cntx) {
-            bool separator = true;
-            cntx.skipSpaces();
-            for (;;) {
-                if (*cntx.ptr == CHAREND || *cntx.ptr == 0 || !separator)
-                    break;
-                push_back(T());
-                back().parse(cntx, *this);
-                if (!cntx.flag(Error::Success))
-                    return;
-                cntx.skipSpaces();
-                if (*cntx.ptr == ',') {
-                    separator = true;
-                    cntx.ptr++;
-                } else
-                    separator = false;
-            }
-            cntx.flag(ERREND);
-        }
+        bool unique() const;
+        void parse(Cntx& cntx);
     };
 
     struct Array {
-        struct Element {
-            Value value;
-            void parse(Cntx& cntx, Container<Element,']',Error::ArrayEnd>& cont) {
-                value.parse(cntx);
-            }
-        };
-        Container<Element,']',Error::ArrayEnd> elements;
-        void parse(Cntx& cntx) {elements.parse(cntx);}
+        Container<Value,']',Error::ArrayEnd> elements;
+        void append(Value& v) {elements.emplace_back(v);}
+        bool operator==(const Array& a) const {return elements == a.elements;}
     };
 
     struct Object {
         struct Pair {
-            Index name{};
+            std::string name;
             Value value;
-            void parse(Cntx& cntx, Container<Pair,'}',Error::ObjectEnd>& cont) {
-                auto index = cntx.parseString();
-                if (!cntx.flag(Error::Success))
-                    return;
-                auto size = cont.size();
-                if (size > 0) {
-                    for (size_t i=0; i<size-1; i++) {
-                        if (!strcmp(&cntx.pool.strs[index], &cntx.pool.strs[cont[i].name])) {
-                            cntx.flag(Error::NameNotUnique);
-                            return;
-                        }
-                    }
-                }
-                name = index;
-                if (cntx.flag(Error::Colon))
-                    value.parse(cntx);
-            }
+            Pair() {}
+            Pair(const char* name, Value& v) : name(name), value(v) {}
+            bool operator==(const Pair& p) const {return name == p.name && value == p.value;}
+            void parse(Cntx& cntx);
         };
         Container<Pair,'}',Error::ObjectEnd> members;
-        void parse(Cntx& cntx) {members.parse(cntx);}
+        void append(const char* name, Value& v) {members.emplace_back(name, v);}
+        bool operator==(const Object& o) const {return members == o.members;}
     };
 
-    struct Pool {
-        std::vector<char> strs;
-        std::vector<Object> objs;
-        std::vector<Array> arrs;
-        Index newStr(size_t size) {
-            auto oldSize = strs.size();
-            strs.resize(oldSize + size + 1);
-            return oldSize;
-        }
-        Index newObject() {
-            auto oldSize = objs.size();
-            objs.resize(oldSize + 1);
-            return oldSize;
-        }
-        Index newArray() {
-            auto oldSize = arrs.size();
-            arrs.resize(oldSize + 1);
-            return oldSize;
-        }
-        Pool() {
-            strs.reserve(1024);
-            objs.reserve(128);
-            arrs.reserve(128);
-        }
-    };
-
-    void parse(Cntx& cntx) {
-        if (cntx.flag(Error::ObjectBegin)) {
-            object = cntx.pool.newObject();
-            cntx.pool.objs[object].parse(cntx);
+    JSON(const char* str) : err{str} {
+        Cntx cntx{str, err};
+        if (cntx.check(Error::ObjectBegin)) {
+            object = new Object;
+            object->members.parse(cntx);
         }
     }
-
-public:
-    JSON(const char* str) {
-        Cntx cntx{str, str, err, pool};
-        parse(cntx);
-    }
-
+    ~JSON() {delete object;}
     Error::Type getError(size_t& offset) const {
-        offset = err.offset;
+        offset = err.offset();
         return err.type;
+    }
+    Object* detach() {
+        auto o = object;
+        object = nullptr;
+        return o;
     }
     
 private:
     Error err;
-    Pool pool;
-    Index object{};
+    Object* object{};
 };
+
+bool JSON::Container<JSON::Value, ']', JSON::Error::ArrayEnd>::unique() const {
+    return true;
+}
+
+bool JSON::Container<JSON::Object::Pair, '}', JSON::Error::ObjectEnd>::unique() const {
+    size_t n = size();
+    if (n > 1) {
+        for (size_t i=0; i<n-1; i++) {
+            if (back().name == at(i).name)
+                return false;
+        }
+    }
+    return true;
+}
+
+template<class T, char CHAREND, JSON::Error::Type ERREND>
+void JSON::Container<T, CHAREND, ERREND>::parse(Cntx& cntx) {
+    bool separator = true;
+    cntx.skipSpaces();
+    while (*cntx.ptr) {
+        if (*cntx.ptr == CHAREND) {
+            cntx.ptr++;
+            return;
+        }
+        if (!separator) {
+            cntx.check(Error::Comma);
+            return;
+        }
+        push_back(T());
+        back().parse(cntx);
+        if (!cntx.check(Error::Success))
+            return;
+        if (!unique()) {
+            cntx.check(Error::NotUnique);
+            return;
+        }
+        cntx.skipSpaces();
+        if (*cntx.ptr == ',') {
+            separator = true;
+            cntx.ptr++;
+        } else
+            separator = false;
+    }
+    cntx.check(ERREND);
+}
+
+void JSON::Value::parse(Cntx& cntx) {
+    cntx.skipSpaces();
+    if ('[' == *cntx.ptr) {
+        cntx.ptr++;
+        type = Type::Array;
+        data.a = new Array;
+        data.a->elements.parse(cntx);
+    } else if ('{' == *cntx.ptr) {
+        cntx.ptr++;
+        type = Type::Object;
+        data.o = new Object;
+        data.o->members.parse(cntx);
+    } else if ('"' == *cntx.ptr) {
+        type = Type::String;
+        auto b = cntx.parseString();
+        if (b) {
+            auto len = cntx.ptr - b;
+            data.s = (char*) malloc(len + 1);
+            strncpy(data.s, b, len);
+            data.s[len] = 0;
+            cntx.ptr++;
+        }
+    } else if (cntx.keyword("true")) {
+        type = Type::True;
+    } else if (cntx.keyword("false")) {
+        type = Type::False;
+    } else if (cntx.keyword("null")) {
+        type = Type::Null;
+    } else {
+        type = Type::Number;
+        char* e;
+        data.d = strtod(cntx.ptr, &e);
+        if (cntx.ptr == e)
+            cntx.check(Error::NumberInvalid);
+        else
+            cntx.ptr = e;
+    }
+}
+
+void JSON::Object::Pair::parse(Cntx& cntx) {
+    auto b = cntx.parseString();
+    if (b) {
+        name.assign(b, cntx.ptr++ - b);
+        if (cntx.check(Error::Colon))
+            value.parse(cntx);
+    }
+}
 
 } // namespace rvd
