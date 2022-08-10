@@ -313,8 +313,8 @@ enum class Error {
     Comma
 };
 
-struct Visitor {
-    virtual ~Visitor() {}
+struct Builder {
+    virtual ~Builder() {}
     virtual bool beginObject() = 0;
     virtual void endObject() = 0;
     virtual bool beginArray() = 0;
@@ -331,10 +331,10 @@ class Parser {
     size_t errOffset{};
     const char* ptr0;
     const char* ptr;
-    Visitor& visit;
+    Builder& build;
 
 public:
-    Parser(const char* s, Visitor& v) : ptr0(s), ptr(s), visit(v) {
+    Parser(const char* s, Builder& b) : ptr0(s), ptr(s), build(b) {
         parseObject();
     }
     Error getError(size_t& offset) const {
@@ -382,7 +382,7 @@ private:
     }
     void parseObject() {
         skipSpaces();
-        if ('{' != *ptr || !visit.beginObject()) {
+        if ('{' != *ptr || !build.beginObject()) {
             error(Error::Object);
             return;
         }
@@ -390,12 +390,12 @@ private:
         skipSpaces();
         if ('}' == *ptr) {
             ptr++;
-            visit.endObject();
+            build.endObject();
             return;
         }
         for (;;) {
             auto name = parseString();
-            if (!name || !visit.setName(name, ptr - name)) {
+            if (!name || !build.setName(name, ptr - name)) {
                 error(Error::Name);
                 return;
             }
@@ -412,7 +412,7 @@ private:
             skipSpaces();
             if ('}' == *ptr) {
                 ptr++;
-                visit.endObject();
+                build.endObject();
                 return;
             }
             if (',' != *ptr) {
@@ -424,7 +424,7 @@ private:
     }
     void parseArray() {
         skipSpaces();
-        if ('[' != *ptr || !visit.beginArray()) {
+        if ('[' != *ptr || !build.beginArray()) {
             error(Error::Array);
             return;
         }
@@ -432,7 +432,7 @@ private:
         skipSpaces();
         if (']' == *ptr) {
             ptr++;
-            visit.endArray();
+            build.endArray();
             return;
         }
         for (;;) {
@@ -442,7 +442,7 @@ private:
             skipSpaces();
             if (']' == *ptr) {
                 ptr++;
-                visit.endArray();
+                build.endArray();
                 return;
             }
             if (',' != *ptr) {
@@ -460,24 +460,24 @@ private:
             parseObject();
         else if ('"' == *ptr) {
             auto str = parseString();
-            if (!str || !visit.setValue(str, ptr - str)) {
+            if (!str || !build.setValue(str, ptr - str)) {
                 error(Error::String);
                 return;
             }
             ptr++;
         } else if (keyword("true")) {
-            if (!visit.setValue(true))
+            if (!build.setValue(true))
                 error(Error::True);
         } else if (keyword("false")) {
-            if (!visit.setValue(false))
+            if (!build.setValue(false))
                 error(Error::False);
         } else if (keyword("null")) {
-            if (!visit.setValue())
+            if (!build.setValue())
                 error(Error::Null);
         } else {
             char* end;
             auto d = strtod(ptr, &end);
-            if (ptr == end || !visit.setValue(d))
+            if (ptr == end || !build.setValue(d))
                 error(Error::Number);
             ptr = end;
         }

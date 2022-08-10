@@ -6,7 +6,7 @@
 #include <set>
 #include <stack>
 
-struct NegativeVisitor : json::Visitor {
+struct NegativeBuilder : json::Builder {
 	std::stack<std::set<std::string>> stack;
     bool beginObject() override {
 		stack.push(std::set<std::string>());
@@ -26,38 +26,51 @@ struct NegativeVisitor : json::Visitor {
     bool setValue(double d) override {return true;}
     bool setValue(const char* str, size_t len) override {return true;}
 };
-
-struct PositiveVisitor : json::Visitor {
-	struct Node {
-		virtual ~Node() {}
-	};
-	struct Number : Node {
-		double d;
-		Number(double d) : d(d) {}
-	};
-	struct String : Node {
-		std::string s;
-		String(const char* s) : s(s) {}
-	};
-	struct Null : Node {};
-	struct True : Node {};
-	struct False : Node {};
-	struct Array : Node {
-		std::vector<Node*> elements;
-		~Array() {for (auto& node : elements) delete node;}
-		void add(Node* v) {elements.push_back(v);}
-	};
-	struct Object : Node {
-		std::vector<std::pair<std::string, Node*>> members;
-		~Object() {for (auto& [_, node] : members) delete node;}
-		void add(std::string name, Node* v) {members.emplace_back(name, v);}
-	};
-	Node* root{};
-	Node* current{};
-	std::stack<Node*> stack;
-	~PositiveVisitor() override {delete root;}
+/*
+struct Node {
+	virtual ~Node() {}
+};
+struct Number : Node {
+	double d;
+	Number(double d) : d(d) {}
+};
+struct String : Node {
+	std::string s;
+	String(const char* s) : s(s) {}
+};
+struct Null : Node {};
+struct True : Node {};
+struct False : Node {};
+struct Array : Node {
+	std::vector<Node*> elements;
+	Array() {}
+	template <typename T, typename... Types>
+	Array(Node* node, Types... ee) {
+		elements.emplace_back(node);
+		Array(ee...);
+	}
+	~Array() {
+		for (auto& node : elements)
+			delete node;
+	}
+};
+struct Object : Node {
+	using Pair = std::pair<std::string, Node*>;
+	std::vector<Pair> members;
+	Object() {}
+	template <typename... Types>
+	Object(const char* name, Node* node, Types... tt) {
+		members.emplace_back(Pair(name, node));
+		Object(tt...);
+	}
+	~Object() {
+		for (auto& [_, node] : members)
+			delete node;
+	}
+};
+*/
+struct PositiveBuilder : json::Builder {
     bool beginObject() override {
-
 		return true;
 	}
     void endObject() override {
@@ -84,9 +97,9 @@ class JSONTest {
 			printf("%d. FAILURE: %s\n", m_index, desc);
 	}
 
-    void doPositive(const char* str, PositiveVisitor& v) {
+    void doPositive(const char* str, PositiveBuilder& b) {
         m_index++;
-        json::Parser parser(str, v);
+        json::Parser parser(str, b);
         size_t offsetTest = 0;
         auto errorTest = parser.getError(offsetTest);
         JSONTest_VERIFY(errorTest == json::Error::Success);
@@ -95,23 +108,24 @@ class JSONTest {
 public:
     void negative(const char* str, json::Error error, size_t offset) {
         m_index++;
-		NegativeVisitor v;
-        json::Parser parser(str, v);
+		NegativeBuilder b;
+        json::Parser parser(str, b);
         size_t offsetTest = 0;
         auto errorTest = parser.getError(offsetTest);
         JSONTest_VERIFY(error == errorTest && offset == offsetTest);
     }
 
 	void positive() {
-		{
-			PositiveVisitor v;
+		//auto o = new Object("a", new String("val"), "b", new Number(1.23));
+		/*{
+			PositiveBuilder v;
 			auto o = new PositiveVisitor::Object;
 			o->add("num", new PositiveVisitor::Number(-1.23e-4));
 			o->add("name", new PositiveVisitor::String("string with \\\"quoted\\\" text"));
 			v.root = o;
 			doPositive(R"({"num" : -1.23e-4, "name" : "string with \"quoted\" text"})", v);
 		}
-		/*{
+		{
             auto o1 = preparePositive(R"({"a" : [1, 2]})");
             rvd::JSON::Object o2;
 			rvd::JSON::Array* a = new rvd::JSON::Array;
