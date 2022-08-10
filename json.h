@@ -285,5 +285,202 @@ void JSON::Object::Pair::parse(Cntx& cntx) {
             value.parse(cntx);
     }
 }
-
 } // namespace rvd
+
+namespace json {
+
+enum class Type {
+    Null,
+    False,
+    True,
+    Number,
+    String,
+    Array,
+    Object
+};
+
+enum class Error {
+    Success,
+    Null,
+    False,
+    True,
+    Number,
+    String,
+    Array,
+    Object,
+    Name,
+    Colon,
+    Comma
+};
+
+struct Visitor {
+    virtual ~Visitor() {}
+    virtual bool beginObject() = 0;
+    virtual void endObject() = 0;
+    virtual bool beginArray() = 0;
+    virtual void endArray() = 0;
+    virtual bool setName(const char* name, size_t len) = 0;
+    virtual bool setValue() = 0;
+    virtual bool setValue(bool b) = 0;
+    virtual bool setValue(double d) = 0;
+    virtual bool setValue(const char* str, size_t len) = 0;
+};
+
+class Parser {
+    Error errType{Error::Success};
+    size_t errOffset{};
+    const char* ptr0;
+    const char* ptr;
+    Visitor& visit;
+
+public:
+    Parser(const char* s, Visitor& v) : ptr0(s), ptr(s), visit(v) {
+        parseObject();
+    }
+    Error getError(size_t& offset) const {
+        offset = errOffset;
+        return errType;
+    }
+
+private:
+    void skipSpaces() {
+        while (' ' == *ptr || '\t' == *ptr || '\n' == *ptr || '\r' == *ptr)
+            ptr++;
+    }
+    bool keyword(const char* str) {
+        auto n = strlen(str);
+        if (strncmp(str, ptr, n))
+            return false;
+        ptr += n; 
+        return true;
+    }
+    void error(Error type) {
+        errType = type;
+        errOffset = ptr - ptr0;
+    }
+    const char* parseString() {
+        skipSpaces();
+        if ('"' != *ptr)
+            return nullptr;
+        auto p0 = ptr;
+        bool protect = false;
+        for (;;) {
+            ptr++;
+            if (!*ptr)
+                break;
+            if (!protect) {
+                if ('"' == *ptr)
+                    break;
+                if ('\\' == *ptr)
+                    protect = true;
+            } else
+                protect = false;
+        }
+        if (!*ptr)
+            return nullptr;
+        return p0;
+    }
+    void parseObject() {
+        skipSpaces();
+        if ('{' != *ptr || !visit.beginObject()) {
+            error(Error::Object);
+            return;
+        }
+        ptr++;
+        skipSpaces();
+        if ('}' == *ptr) {
+            ptr++;
+            visit.endObject();
+            return;
+        }
+        for (;;) {
+            auto name = parseString();
+            if (!name || !visit.setName(name, ptr - name)) {
+                error(Error::Name);
+                return;
+            }
+            ptr++;
+            skipSpaces();
+            if (':' != *ptr) {
+                error(Error::Colon);
+                return;
+            }
+            ptr++;
+            parseValue();
+            if (errType != Error::Success)
+                return;
+            skipSpaces();
+            if ('}' == *ptr) {
+                ptr++;
+                visit.endObject();
+                return;
+            }
+            if (',' != *ptr) {
+                error(Error::Comma);
+                return;
+            }
+            ptr++;
+        }
+    }
+    void parseArray() {
+        skipSpaces();
+        if ('[' != *ptr || !visit.beginArray()) {
+            error(Error::Array);
+            return;
+        }
+        ptr++;
+        skipSpaces();
+        if (']' == *ptr) {
+            ptr++;
+            visit.endArray();
+            return;
+        }
+        for (;;) {
+            parseValue();
+            if (errType != Error::Success)
+                return;
+            skipSpaces();
+            if (']' == *ptr) {
+                ptr++;
+                visit.endArray();
+                return;
+            }
+            if (',' != *ptr) {
+                error(Error::Comma);
+                return;
+            }
+            ptr++;
+        }
+    }
+    void parseValue() {
+        skipSpaces();
+        if ('[' == *ptr)
+            parseArray();
+        else if ('{' == *ptr)
+            parseObject();
+        else if ('"' == *ptr) {
+            auto str = parseString();
+            if (!str || !visit.setValue(str, ptr - str)) {
+                error(Error::String);
+                return;
+            }
+            ptr++;
+        } else if (keyword("true")) {
+            if (!visit.setValue(true))
+                error(Error::True);
+        } else if (keyword("false")) {
+            if (!visit.setValue(false))
+                error(Error::False);
+        } else if (keyword("null")) {
+            if (!visit.setValue())
+                error(Error::Null);
+        } else {
+            char* end;
+            auto d = strtod(ptr, &end);
+            if (ptr == end || !visit.setValue(d))
+                error(Error::Number);
+            ptr = end;
+        }
+    }
+};
+} // namespace json
