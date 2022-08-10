@@ -1,12 +1,15 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 
 #include "json.h"
+#include "node.h"
 #include <cstdio>
 #include <memory>
 #include <set>
 #include <stack>
 
-struct NegativeBuilder : json::Builder {
+using namespace json;
+
+struct NegativeBuilder : Builder {
 	std::stack<std::set<std::string>> stack;
     bool beginObject() override {
 		stack.push(std::set<std::string>());
@@ -17,73 +20,55 @@ struct NegativeBuilder : json::Builder {
 	}
     bool beginArray() override {return true;}
     void endArray() override {}
-    bool setName(const char* name, size_t len) override {
-		auto [_, inserted] = stack.top().insert(std::string(name, len));
+    bool setName(const char* s, size_t len) override {
+		auto [_, inserted] = stack.top().insert(std::string(s, len));
 		return inserted;
 	}
     bool setValue() override {return true;}
-    bool setValue(bool b) override {return true;}
-    bool setValue(double d) override {return true;}
-    bool setValue(const char* str, size_t len) override {return true;}
+    bool setValue(bool) override {return true;}
+    bool setValue(double) override {return true;}
+    bool setValue(const char*, size_t) override {return true;}
 };
-/*
-struct Node {
-	virtual ~Node() {}
-};
-struct Number : Node {
-	double d;
-	Number(double d) : d(d) {}
-};
-struct String : Node {
-	std::string s;
-	String(const char* s) : s(s) {}
-};
-struct Null : Node {};
-struct True : Node {};
-struct False : Node {};
-struct Array : Node {
-	std::vector<Node*> elements;
-	Array() {}
-	template <typename T, typename... Types>
-	Array(Node* node, Types... ee) {
-		elements.emplace_back(node);
-		Array(ee...);
-	}
-	~Array() {
-		for (auto& node : elements)
-			delete node;
-	}
-};
-struct Object : Node {
-	using Pair = std::pair<std::string, Node*>;
-	std::vector<Pair> members;
-	Object() {}
-	template <typename... Types>
-	Object(const char* name, Node* node, Types... tt) {
-		members.emplace_back(Pair(name, node));
-		Object(tt...);
-	}
-	~Object() {
-		for (auto& [_, node] : members)
-			delete node;
-	}
-};
-*/
-struct PositiveBuilder : json::Builder {
+
+struct PositiveBuilder : Builder {
+	std::stack<Node*> stack;
+	std::string name;
+	Object* object{};
+
+	~PositiveBuilder() {delete object;}
     bool beginObject() override {
+		auto o = new Object{};
+		if (stack.empty())
+			object = o;
+		else
+			set(o);
+		stack.push(o);
 		return true;
 	}
-    void endObject() override {
-	}
-    bool beginArray() override {return true;}
-    void endArray() override {}
-    bool setName(const char* name, size_t len) override {
+    void endObject() override {stack.pop();}
+    bool beginArray() override {
+		auto a = new Array{};
+		set(a);
+		stack.push(a);
 		return true;
 	}
-    bool setValue() override {return true;}
-    bool setValue(bool b) override {return true;}
-    bool setValue(double d) override {return true;}
-    bool setValue(const char* str, size_t len) override {return true;}
+    void endArray() override {stack.pop();}
+    bool setName(const char* s, size_t len) override {name.assign(s, len); return true;}
+    bool setValue() override {return set(new Null);}
+    bool setValue(bool b) override {return b ? set(new True) : set(new False);}
+	bool setValue(double d) override {return set(new Number{d});}
+	bool setValue(const char* s, size_t len) override {return set(new String{s, len});}
+
+	bool set(Node* node) {
+		auto parent = stack.top();
+		if (auto o = dynamic_cast<Object*>(stack.top()))
+			o->members.push_back(Member(std::move(name), node));
+		else if (auto a = dynamic_cast<Array*>(stack.top()))
+			a->elements.push_back(node);
+		else
+			return false;
+		return true;
+	}
 };
 
 class JSONTest {
@@ -97,68 +82,61 @@ class JSONTest {
 			printf("%d. FAILURE: %s\n", m_index, desc);
 	}
 
-    void doPositive(const char* str, PositiveBuilder& b) {
+    void doPositive(const char* str, Object* o) {
         m_index++;
-        json::Parser parser(str, b);
+		PositiveBuilder b;
+        Parser parser(str, b);
         size_t offsetTest = 0;
         auto errorTest = parser.getError(offsetTest);
-        JSONTest_VERIFY(errorTest == json::Error::Success);
+        JSONTest_VERIFY(errorTest == Error::Success && *o == b.object);
+		delete o;
     };
 
 public:
-    void negative(const char* str, json::Error error, size_t offset) {
+    void negative(const char* str, Error error, size_t offset) {
         m_index++;
 		NegativeBuilder b;
-        json::Parser parser(str, b);
+        Parser parser(str, b);
         size_t offsetTest = 0;
         auto errorTest = parser.getError(offsetTest);
         JSONTest_VERIFY(error == errorTest && offset == offsetTest);
     }
 
 	void positive() {
-		//auto o = new Object("a", new String("val"), "b", new Number(1.23));
-		/*{
-			PositiveBuilder v;
-			auto o = new PositiveVisitor::Object;
-			o->add("num", new PositiveVisitor::Number(-1.23e-4));
-			o->add("name", new PositiveVisitor::String("string with \\\"quoted\\\" text"));
-			v.root = o;
-			doPositive(R"({"num" : -1.23e-4, "name" : "string with \"quoted\" text"})", v);
+		{
+			auto o = new Object{
+				Member{"num", new Number{-1.23e-4}},
+				Member{"name", new String{"string with \\\"quoted\\\" text"}}
+				};
+			doPositive(R"({"num" : -1.23e-4, "name" : "string with \"quoted\" text"})", o);
 		}
 		{
-            auto o1 = preparePositive(R"({"a" : [1, 2]})");
-            rvd::JSON::Object o2;
-			rvd::JSON::Array* a = new rvd::JSON::Array;
-			a->append(rvd::JSON::Value(1));
-			a->append(rvd::JSON::Value(2));
-            o2.append("a", rvd::JSON::Value(a));
-            JSONTest_VERIFY(*o1 == o2);
+			auto o = new Object{Member{"a", new Array{new Number{1}, new Number{2}}}};
+			doPositive(R"({"a" : [1, 2]})", o);
 		}
 		{
-            auto o1 = preparePositive(R"({"o" : {"x" : 1, "y" : 2}})");
-			auto o = new JSON::Object;
-			o->append("x", JSON::Value(1));
-            o->append("y", JSON::Value(2));
-            JSON::Object o2;
-			o2.append("o", JSON::Value(o));
-            JSONTest_VERIFY(*o1 == o2);
-		}*/
+			auto o = new Object{Member{"o", new Object{
+				Member{"x", new Number{1}},
+				Member{"y", new Number{2}}
+			}}};
+			doPositive(R"({"o" : {"x" : 1, "y" : 2}})", o);
+		}
 	}
 };
 
 int main(int argc, char* argv[]) {
 	JSONTest test;
-	test.negative("", json::Error::Object, 0);
-	test.negative("{", json::Error::Name, 1);
-	test.negative("{1}", json::Error::Name, 1);
-	test.negative(R"({"})", json::Error::Name, 3);
-	test.negative(R"({""})", json::Error::Colon, 3);
-	test.negative(R"({"" :})", json::Error::Number, 5);
-	test.negative(R"({"" : "})", json::Error::String, 8);
-	test.negative(R"({"" : -})", json::Error::Number, 6);
-	test.negative(R"({"" : .})", json::Error::Number, 6);
-    test.negative(R"({"a" : 1, "a" : 2})", json::Error::Name, 12);
-	test.negative(R"({"a" : 1 "b" : 2})", json::Error::Comma, 9);
     test.positive();
+	test.negative("", Error::Object, 0);
+	test.negative("{", Error::Name, 1);
+	test.negative("{1}", Error::Name, 1);
+	test.negative(R"({"})", Error::Name, 3);
+	test.negative(R"({""})", Error::Colon, 3);
+	test.negative(R"({"" :})", Error::Number, 5);
+	test.negative(R"({"" : "})", Error::String, 8);
+	test.negative(R"({"" : -})", Error::Number, 6);
+	test.negative(R"({"" : .})", Error::Number, 6);
+    test.negative(R"({"a" : 1, "a" : 2})", Error::Name, 12);
+	test.negative(R"({"a" : 1 "b" : 2})", Error::Comma, 9);
 	return 0;
 }
