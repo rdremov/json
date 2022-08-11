@@ -54,9 +54,10 @@ private:
     }
     bool keyword(const char* str) {
 		auto p = ptr;
-		while (*p++ == *str++);
-		if (*str)
-			return false;
+		while (*str) {
+            if (*p++ != *str++)
+                return false;
+        }
 		ptr = p;
 		return true;
     }
@@ -68,22 +69,19 @@ private:
         skipSpaces();
         if ('"' != *ptr)
             return nullptr;
-		ptr++;
-        auto p0 = ptr;
-        bool protect = false;
+        auto p0 = ++ptr;
+        bool normal = true;
         while (*ptr) {
-            if (!protect) {
+            if (normal) {
                 if ('"' == *ptr)
-                    break;
+                    return p0;
                 if ('\\' == *ptr)
-                    protect = true;
+                    normal = false;
             } else
-                protect = false;
+                normal = true;
 			ptr++;
         }
-        if (!*ptr)
-            return nullptr;
-        return p0;
+        return nullptr;
     }
     void parseObject() {
         skipSpaces();
