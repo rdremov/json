@@ -40,10 +40,17 @@ struct NodeBuilder : Builder {
 		}
 		return true;
 	}
-    bool setValue() override {return set(new Null);}
-    bool setValue(bool b) override {return b ? set(new True) : set(new False);}
-	bool setValue(double d) override {return set(new Number{d});}
-	bool setValue(const char* s, size_t len) override {return set(new String{s, len});}
+    bool setNull() override {return set(new Null);}
+    bool setFalse() override {return set(new False);}
+    bool setTrue() override {return set(new True);}
+	bool setString(const char* s, size_t len) override {return set(new String{s, len});}
+	bool setNumber(const char* s, size_t len) override {
+		char* end;
+        auto d = strtod(s, &end);
+		if (end - s != len)
+			return false;
+		return set(new Number{d});
+	}
 	bool set(Node* node) {
 		auto parent = stack.top();
 		if (auto o = dynamic_cast<Object*>(stack.top()))
@@ -107,8 +114,8 @@ int main(int argc, char* argv[]) {
 	test.negative(R"({""})", Error::Colon, 3);
 	test.negative(R"({"" :})", Error::Number, 5);
 	test.negative(R"({"" : "})", Error::String, 8);
-	test.negative(R"({"" : -})", Error::Number, 6);
-	test.negative(R"({"" : .})", Error::Number, 6);
+	test.negative(R"({"" : -})", Error::Number, 7);
+	test.negative(R"({"" : .})", Error::Number, 7);
     test.negative(R"({"a" : 1, "a" : 2})", Error::Name, 12);
 	test.negative(R"({"a" : 1 "b" : 2})", Error::Comma, 9);
 	return 0;

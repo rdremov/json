@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include <cstdlib>
-
 namespace json {
 
 enum class Error {
@@ -25,10 +23,11 @@ struct Builder {
     virtual bool beginArray() = 0;
     virtual void endArray() = 0;
     virtual bool setName(const char*, size_t) = 0;
-    virtual bool setValue() = 0;
-    virtual bool setValue(bool) = 0;
-    virtual bool setValue(double) = 0;
-    virtual bool setValue(const char*, size_t) = 0;
+    virtual bool setNull() = 0;
+    virtual bool setFalse() = 0;
+    virtual bool setTrue() = 0;
+    virtual bool setString(const char*, size_t) = 0;
+    virtual bool setNumber(const char*, size_t) = 0;
 };
 
 class Parser {
@@ -50,6 +49,10 @@ public:
 private:
     void skipSpaces() {
         while (' ' == *ptr || '\t' == *ptr || '\n' == *ptr || '\r' == *ptr)
+            ptr++;
+    }
+    void skipDigits() {
+        while (*ptr >= '0' && *ptr <= '9')
             ptr++;
     }
     bool keyword(const char* str) {
@@ -82,6 +85,24 @@ private:
 			ptr++;
         }
         return nullptr;
+    }
+    const char* parseNumber() {
+        skipSpaces();
+        auto p0 = ptr;
+        if ('-' == *ptr)
+            ptr++;
+        skipDigits();
+        if ('.' == *ptr) {
+            ptr++;
+            skipDigits();
+        }
+        if ('e' == *ptr || 'E' == *ptr) {
+            ptr++;
+            if ('-' == *ptr || '+' == *ptr)
+                ptr++;
+            skipDigits();
+        }
+        return p0;
     }
     void parseObject() {
         skipSpaces();
@@ -163,26 +184,24 @@ private:
             parseObject();
         else if ('"' == *ptr) {
             auto str = parseString();
-            if (!str || !build.setValue(str, ptr - str)) {
+            if (!str || !build.setString(str, ptr - str)) {
                 error(Error::String);
                 return;
             }
             ptr++;
         } else if (keyword("true")) {
-            if (!build.setValue(true))
+            if (!build.setTrue())
                 error(Error::True);
         } else if (keyword("false")) {
-            if (!build.setValue(false))
+            if (!build.setFalse())
                 error(Error::False);
         } else if (keyword("null")) {
-            if (!build.setValue())
+            if (!build.setNull())
                 error(Error::Null);
         } else {
-            char* end;
-            auto d = strtod(ptr, &end);
-            if (ptr == end || !build.setValue(d))
+            auto str = parseNumber();
+            if (ptr <= str || !build.setNumber(str, ptr - str))
                 error(Error::Number);
-            ptr = end;
         }
     }
 };
