@@ -1,3 +1,5 @@
+/* Roman Dremov 2022 basic C++ json memory model for testing v1 */
+
 #pragma once
 
 #include <string>

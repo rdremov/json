@@ -1,8 +1,11 @@
-﻿#define _CRT_SECURE_NO_WARNINGS
+﻿/* Roman Dremov 2022 C++ json parser tests */
+
+#define _CRT_SECURE_NO_WARNINGS
 
 #include "json.h"
 #include "node.h"
 #include <cstdio>
+#include <cstdlib>
 #include <stack>
 
 using namespace json;

@@ -1,4 +1,6 @@
-﻿#pragma once
+﻿/* Roman Dremov 2022 no dependency C++ json parser with builder callbacks v1 */
+
+#pragma once
 
 namespace json {
 
